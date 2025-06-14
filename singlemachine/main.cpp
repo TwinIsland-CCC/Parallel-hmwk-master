@@ -382,13 +382,13 @@ void bitonic_sort_iterative_avx2_thread(vector<int>& arr) {
                 }
                 pool.wait();
             } else {
-                // 标量: 一次处理一个
+                // 一次处理一个
                 int batch = (n + num_threads - 1) / num_threads;
-                for (int t = 0; t < num_threads; ++t) {
+                for (int t = 0; t < num_threads; t++) {
                     int start = t * batch;
                     int end = std::min(n, (t + 1) * batch);
                     pool.detach_task([&, start, end, size, stride]() {
-                        for (int i = start; i < end; ++i) {
+                        for (int i = start; i < end; i++) {
                             int j = i ^ stride;
                             if (j > i) {
                                 bool dir = ((i & size) == 0);
