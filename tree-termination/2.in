@@ -1,0 +1,6 @@
+start 0
+send 0 1
+send 1 2
+send 0 3
+done 2
+done 3
