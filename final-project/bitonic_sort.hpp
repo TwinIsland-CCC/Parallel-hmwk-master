@@ -20,6 +20,8 @@
 
 #include <immintrin.h>
 
+#include "common.hpp"
+
 #include "./BS_thread_pool.hpp"
 
 using namespace std;
@@ -189,7 +191,7 @@ void bitonic_sort_iterative_omp(vector<int>& arr) {
 void bitonic_sort_iterative_thread(vector<int>& arr) {
     padding(arr, arr.size());
     int n = arr.size();
-    int num_threads = thread::hardware_concurrency();
+    int num_threads = THREAD_NUM;
     BS::thread_pool pool(num_threads);
     for (int size = 2; size <= n; size <<= 1) {
         for (int stride = size >> 1; stride > 0; stride >>= 1) {
@@ -215,7 +217,7 @@ void bitonic_sort_iterative_thread(vector<int>& arr) {
 }
 
 struct pthread_args {
-    std::vector<int>* arr;
+    vector<int>* arr;
     int start, end, size, stride, n;
 };
 
@@ -227,17 +229,17 @@ void* bitonic_thread_func(void* arg) {
         if (j > i) {
             bool dir = ((i & a->size) == 0);
             if ((arr[i] > arr[j]) == dir) {
-                std::swap(arr[i], arr[j]);
+                swap(arr[i], arr[j]);
             }
         }
     }
     return nullptr;
 }
 
-void bitonic_sort_iterative_pthread(std::vector<int>& arr, int threshold=1024) {
+void bitonic_sort_iterative_pthread(vector<int>& arr, int threshold=1024) {
     padding(arr, arr.size());
     int n = arr.size();
-    int num_threads = std::thread::hardware_concurrency();
+    int num_threads = THREAD_NUM;
 
     for (int size = 2; size <= n; size <<= 1) {
         for (int stride = size >> 1; stride > 0; stride >>= 1) {
@@ -247,16 +249,16 @@ void bitonic_sort_iterative_pthread(std::vector<int>& arr, int threshold=1024) {
                     if (j > i) {
                         bool dir = ((i & size) == 0);
                         if ((arr[i] > arr[j]) == dir) {
-                            std::swap(arr[i], arr[j]);
+                            swap(arr[i], arr[j]);
                         }
                     }
                 }
             } else {
                 int batch = (n + num_threads - 1) / num_threads;
-                std::vector<pthread_t> threads(num_threads);
-                std::vector<pthread_args> args(num_threads);
+                vector<pthread_t> threads(num_threads);
+                vector<pthread_args> args(num_threads);
                 for (int t = 0; t < num_threads; t++) {
-                    args[t] = pthread_args{&arr, t * batch, std::min(n, (t + 1) * batch), size, stride, n};
+                    args[t] = pthread_args{&arr, t * batch, min(n, (t + 1) * batch), size, stride, n};
                     pthread_create(&threads[t], nullptr, bitonic_thread_func, &args[t]);
                 }
                 for (int t = 0; t < num_threads; t++) {
@@ -353,7 +355,7 @@ void bitonic_sort_iterative_avx2_omp(vector<int>& arr) {
 void bitonic_sort_iterative_avx2_thread(vector<int>& arr) {
     padding(arr, arr.size());
     int n = arr.size();
-    int num_threads = thread::hardware_concurrency();
+    int num_threads = THREAD_NUM * 4;
     BS::thread_pool pool(num_threads);
     for (int size = 2; size <= n; size <<= 1) {
         for (int stride = size >> 1; stride > 0; stride >>= 1) {
@@ -362,7 +364,7 @@ void bitonic_sort_iterative_avx2_thread(vector<int>& arr) {
                 int batch = (n / (2 * stride) + num_threads - 1) / num_threads;
                 for (int t = 0; t < num_threads; ++t) {
                     int start = t * batch * 2 * stride;
-                    int end = std::min(n, (t + 1) * batch * 2 * stride);
+                    int end = min(n, (t + 1) * batch * 2 * stride);
                     pool.detach_task([&, start, end, size, stride]() {
                         for (int i = start; i < end; i += 2 * stride) {
                             for (int j = 0; j < stride; j += 8) {
@@ -386,14 +388,14 @@ void bitonic_sort_iterative_avx2_thread(vector<int>& arr) {
                 int batch = (n + num_threads - 1) / num_threads;
                 for (int t = 0; t < num_threads; t++) {
                     int start = t * batch;
-                    int end = std::min(n, (t + 1) * batch);
+                    int end = min(n, (t + 1) * batch);
                     pool.detach_task([&, start, end, size, stride]() {
                         for (int i = start; i < end; i++) {
                             int j = i ^ stride;
                             if (j > i) {
                                 bool dir = ((i & size) == 0);
                                 if ((arr[i] > arr[j]) == dir) {
-                                    std::swap(arr[i], arr[j]);
+                                    swap(arr[i], arr[j]);
                                 }
                             }
                         }
@@ -446,86 +448,10 @@ void bitonic_sort_iterative_avx2_aligned(aligned_vector& arr) {
     while (!arr.empty() && arr.back() == numeric_limits<int>::max()) arr.pop_back();
 }
 
-void topknsort_qsort_recursive(int* arr, int left, int right, BS::thread_pool<>& pool, int depth = 0, int max_depth = 4) {
-    if (left >= right) return;
-
-    int pivot = arr[right];
-    int i = left - 1;
-    for (int j = left; j < right; ++j) {
-        if (arr[j] <= pivot) {
-            swap(arr[++i], arr[j]);
-        }
-    }
-    swap(arr[i + 1], arr[right]);
-    int mid = i + 1;
-
-    if (depth < max_depth) {
-        // 提交两个任务到线程池
-        auto future1 = pool.submit_task([=, &pool]() {
-            topknsort_qsort_recursive(arr, left, mid - 1, pool, depth + 1, max_depth);
-        });
-        auto future2 = pool.submit_task([=, &pool]() {
-            topknsort_qsort_recursive(arr, mid + 1, right, pool, depth + 1, max_depth);
-        });
-        // 等待两个任务完成
-        future1.get();
-        future2.get();
-    } else {
-        // 到达最大深度，转为串行排序
-        sort(arr + left, arr + mid);
-        sort(arr + mid + 1, arr + right + 1);
-    }
-}
-
-void topknsort_qsort(vector<int>& arr) {
-    int n = arr.size();
-    if (n <= 1) return;
-    BS::thread_pool pool(std::thread::hardware_concurrency());
-    topknsort_qsort_recursive(arr.data(), 0, n - 1, ref(pool));
-}
-
-
-void topknsort_merge(vector<int>& arr, int left, int mid, int right, vector<int>& temp) {
-    int i = left, j = mid + 1, k = left;
-    while (i <= mid && j <= right) {
-        if (arr[i] <= arr[j]) temp[k++] = arr[i++];
-        else temp[k++] = arr[j++];
-    }
-    while (i <= mid) temp[k++] = arr[i++];
-    while (j <= right) temp[k++] = arr[j++];
-    for (int l = left; l <= right; ++l) arr[l] = temp[l];
-}
-
-
-void topknsort_merge_sort(vector<int>& arr, int left, int right, vector<int>& temp, BS::thread_pool<>& pool, int depth = 0, int max_depth = 4) {
-    if (left >= right) return;
-    int mid = (left + right) / 2;
-
-    if (depth < max_depth) {
-        future<void> f1 = pool.submit_task([=, &arr, &temp, &pool] () {
-            topknsort_merge_sort(ref(arr), left, mid, ref(temp), ref(pool), depth + 1, max_depth);
-        });
-        topknsort_merge_sort(arr, mid + 1, right, temp, pool, depth + 1, max_depth);
-        f1.get();
-    } else {
-        sort(arr.begin() + left, arr.begin() + mid + 1);
-        sort(arr.begin() + mid + 1, arr.begin() + right + 1);
-    }
-    topknsort_merge(arr, left, mid, right, temp);
-}
-
-void topknsort_msort(vector<int>& arr) {
-    int n = arr.size();
-    if (n <= 1) return;
-    vector<int> temp(n);
-    BS::thread_pool pool(thread::hardware_concurrency());
-    topknsort_merge_sort(arr, 0, n - 1, ref(temp), ref(pool));
-}
-
 void gen_arr(vector<int>& arr, int n) {
     static random_device rd;
     static mt19937 gen(rd());
-    uniform_int_distribution<> dis(1, 100000);
+    uniform_int_distribution<> dis;
     
     for (int i = 0; i < n; i++) {
         arr[i] = dis(gen);
@@ -618,96 +544,3 @@ void print_arr(const vector<int>& arr) {
 
 //     return 0;
 // }
-
-int compare_int(const void* a, const void* b) {
-    int ia = *(const int*)a;
-    int ib = *(const int*)b;
-    return (ia > ib) - (ia < ib);  // 避免溢出
-}
-
-void test(int n, ostream& out) {
-    vector<int> arr(n);
-    gen_arr(arr, n);
-    vector<int> arr_copy = arr;
-
-    auto run_and_record = [&](const string& name, auto sort_func, int n) {
-        long long total_time = 0;
-        bool all_sorted = true;
-        int repeat = 5;
-        for (int r = 0; r < repeat; r++) {
-            arr = arr_copy;
-            cout << name << ", size: " << n << ", aligned: " << (reinterpret_cast<uintptr_t>(arr.data()) % 32 == 0) << endl;
-            auto start = chrono::high_resolution_clock::now();
-            sort_func(arr);
-            auto end = chrono::high_resolution_clock::now();
-            auto duration = chrono::duration_cast<chrono::microseconds>(end - start).count();
-            total_time += duration;
-            if (!check_sorted(arr)) all_sorted = false;
-        }
-        out << n << "," << name << "," << (total_time / repeat) << "," << (all_sorted ? "Y" : "N") << "\n";
-    };
-
-    run_and_record("baseline", [](vector<int>& a){ bitonic_sort(a); }, n);
-    run_and_record("iterative", [](vector<int>& a){ bitonic_sort_iterative(a); }, n);
-    run_and_record("qsort", [](vector<int>& a){ sort(a.begin(), a.end()); }, n);
-    run_and_record("qsort(stdlib)", [](vector<int>& a){ qsort(a.data(), a.size(), sizeof(int), compare_int); }, n);
-    run_and_record("qsort_parallel", [](vector<int>& a){ topknsort_qsort(a); }, n);
-    run_and_record("msort_parallel", [](vector<int>& a){ topknsort_msort(a); }, n);
-    run_and_record("omp", [](vector<int>& a){ bitonic_sort_parallel_omp(a); }, n);
-    run_and_record("iterative_omp", [](vector<int>& a){ bitonic_sort_iterative_omp(a); }, n);
-    run_and_record("iterative_pthread", [](vector<int>& a){ bitonic_sort_iterative_pthread(a); }, n);
-    run_and_record("iterative_thread", [](vector<int>& a){ bitonic_sort_iterative_thread(a); }, n);
-    run_and_record("iterative_avx2", [](vector<int>& a){ bitonic_sort_iterative_avx2(a); }, n);
-    run_and_record("iterative_avx2_omp", [](vector<int>& a){ bitonic_sort_iterative_avx2_omp(a); }, n);
-    run_and_record("iterative_avx2_thread", [](vector<int>& a){ bitonic_sort_iterative_avx2_thread(a); }, n);
-    out.flush();
-    long long total_time = 0;
-    bool all_sorted = true;
-    int repeat = 5;
-    for (int r = 0; r < repeat; r++) {
-        aligned_vector aligned_arr(n);
-        gen_aligned_arr(aligned_arr, n);
-        cout << (reinterpret_cast<uintptr_t>(aligned_arr.data()) % 32 == 0);
-        auto start = chrono::high_resolution_clock::now();
-        bitonic_sort_iterative_avx2_aligned(aligned_arr);
-        auto end = chrono::high_resolution_clock::now();
-        auto duration = chrono::duration_cast<chrono::microseconds>(end - start).count();
-        check_sorted(aligned_arr);
-        total_time += duration;
-    }
-    out << n << "," << "iterative_avx2_aligned" << "," << (total_time / repeat) << "," << (all_sorted ? "Y" : "N") << "\n";
-    out.flush();
-}
-
-std::string get_timestamp() {
-    auto now = std::chrono::system_clock::now();
-    std::time_t t = std::chrono::system_clock::to_time_t(now);
-    std::tm tm;
-#if defined(_WIN32)
-    localtime_s(&tm, &t);
-#else
-    localtime_r(&t, &tm);
-#endif
-    std::ostringstream oss;
-    oss << std::put_time(&tm, "%Y%m%d_%H%M%S");
-    return oss.str();
-}
-
-// 示例main函数
-int main() {
-    std::string filename = "benchmark_" + get_timestamp() + ".csv";
-    std::ofstream fout(filename);
-    fout << "data_size,method,time(us),sorted\n";
-    test(2 << 12, fout);
-    test(2 << 13, fout);
-    test(2 << 14, fout);
-    test(2 << 15, fout);
-    test(2 << 16, fout);
-    test(2 << 17, fout);
-    test(2 << 18, fout);
-    test(2 << 19, fout);
-    test(2 << 20, fout);
-    test(2 << 21, fout);
-    fout.close();
-    return 0;
-}

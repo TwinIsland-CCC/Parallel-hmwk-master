@@ -1,0 +1,1 @@
+-D__CUDA_ARCH__=520 -D__CUDA_ARCH_LIST__=520 -D__NV_LEGACY_LAUNCH -nologo -c -TP  -DCUDA_DOUBLE_MATH_FUNCTIONS -EHsc "-IC:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.8/bin/../include"   "C:\Users\CCC\Desktop\RecentUsed\Parallel\Parallel-hmwk-master\final-project\build\CMakeFiles\3.31.4\CompilerIdCUDA\tmp\CMakeCUDACompilerId.cudafe1.cpp" 
